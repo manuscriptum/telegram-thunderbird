@@ -5,7 +5,7 @@
 Components.utils.import("resource:///modules/imXPCOMUtils.jsm");
 Components.utils.import("resource:///modules/jsProtoHelper.jsm");
 
-var tcpsocket = Components.classes["@mozilla.org/tcp-socket;1"].createInstance(Components.interfaces.nsIDOMTCPSocket);
+//var tcpsocket = Components.classes["@mozilla.org/tcp-socket;1"].createInstance(Components.interfaces.nsIDOMTCPSocket);
 
 function Conversation(aAccount)
 {
@@ -45,8 +45,8 @@ Account.prototype = {
     this.reportConnecting();
     // do something here
 
-    this.socket = tcpsocket.open("localhost", "1234");
-    this.registerSocketEvents();
+    /*this.socket = tcpsocket.open("localhost", "1234");
+    this.registerSocketEvents();*/
 
     this.reportConnected();
     setTimeout((function() {
@@ -56,7 +56,7 @@ Account.prototype = {
       this._conv.writeMessage("telegram", "asdf", {system: true});
     }).bind(this), 0);
   },
-  registerSocketEvents: function () {
+/*  registerSocketEvents: function () {
     var socket = this.socket;
     socket.onopen = function() {
       socket.send("main_session\n");
@@ -73,8 +73,8 @@ Account.prototype = {
       }
       dump('\n'+JSON.stringify(json));
     };
-  },
-  _conversations: null,
+  },*/
+  _conv: null,
   dialog_list: null,
   disconnect: function(aSilent) {
     this.reportDisconnecting(Components.interfaces.prplIAccount.NO_ERROR, "");
