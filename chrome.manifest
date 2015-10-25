@@ -1,0 +1,4 @@
+component {03618410-7a46-11e5-a837-0800200c9a66} telegram.js
+contract @mozilla.org/chat/telegram;1 {03618410-7a46-11e5-a837-0800200c9a66}
+category im-protocol-plugin prpl-telegram @mozilla.org/chat/telegram;1
+content telegram content/
