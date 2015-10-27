@@ -21,5 +21,13 @@ Compile and autoreload Addon in a running thunderbird instance
 ### TODO:
 I plan to implement the library from here: https://github.com/zhukov/webogram
 
+Started with the function "sendCode"
+Now on MtpApiManager
+
+Current file:
+mtproto_wrapper.jsm
+Current error:
+$q is undefined.
+
 ### Usefull links:
 http://telegram.org/api

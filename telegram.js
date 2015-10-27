@@ -5,7 +5,9 @@
 Components.utils.import("resource:///modules/imXPCOMUtils.jsm");
 Components.utils.import("resource:///modules/jsProtoHelper.jsm");
 
-//var tcpsocket = Components.classes["@mozilla.org/tcp-socket;1"].createInstance(Components.interfaces.nsIDOMTCPSocket);
+Components.utils.import("chrome://telegram/content/components/controller.jsm");
+
+sendCode();
 
 function Conversation(aAccount)
 {
@@ -45,8 +47,7 @@ Account.prototype = {
     this.reportConnecting();
     // do something here
 
-    /*this.socket = tcpsocket.open("localhost", "1234");
-    this.registerSocketEvents();*/
+    //sendCode();
 
     this.reportConnected();
     setTimeout((function() {
@@ -56,24 +57,6 @@ Account.prototype = {
       this._conv.writeMessage("telegram", "asdf", {system: true});
     }).bind(this), 0);
   },
-/*  registerSocketEvents: function () {
-    var socket = this.socket;
-    socket.onopen = function() {
-      socket.send("main_session\n");
-      socket.send("dialog_list\n");
-    }
-
-    socket.ondata = function (data) {
-      var json = JSON.parse(data._data.split('\n')[1]);
-      if (!this.dialog_list) {
-        for (var i = 0; i < json.length; i++ ) {
-          dump('\n'+JSON.stringify(json[i]));
-        }
-        this.dialog_list = json;
-      }
-      dump('\n'+JSON.stringify(json));
-    };
-  },*/
   _conv: null,
   dialog_list: null,
   disconnect: function(aSilent) {

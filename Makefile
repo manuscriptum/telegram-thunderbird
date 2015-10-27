@@ -5,6 +5,7 @@ FILES := \
 	chrome.manifest \
 	telegram.js \
 	$(wildcard content/*) \
+	$(wildcard content/components/*) \
 	${NULL}
 
 telegram.xpi: Makefile
