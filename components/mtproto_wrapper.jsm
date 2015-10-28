@@ -1,5 +1,7 @@
 var EXPORTED_SYMBOLS = ["MtpApiManager"];
 
+Components.utils.import("resource://gre/modules/Timer.jsm");
+
 Components.utils.import("resource://components/bin_utils.jsm");
 Components.utils.import("resource://components/ng_utils.jsm");
 Components.utils.import("resource://components/config.jsm");
@@ -33,10 +35,11 @@ var MtpApiManager = new function () {
 
   function mtpLogOut () {
     var storageKeys = [];
-    for (var dcID = 1; dcID <= 5; dcID++) {
+    for (var dcID = 1; dcID <= 1; dcID++) { //5
       storageKeys.push('dc' + dcID + '_auth_key');
     }
-    return Storage.get.apply(Storage, storageKeys).then(function (storageResult) {
+
+    return Storage.get(storageKeys).then(function (storageResult) {
       var logoutPromises = [];
       for (var i = 0; i < storageResult.length; i++) {
         if (storageResult[i]) {
@@ -82,7 +85,7 @@ var MtpApiManager = new function () {
 
       var authKeyHex = result[0],
           serverSaltHex = result[1];
-      // console.log('ass', dcID, authKeyHex, serverSaltHex);
+      dump('ass', dcID, authKeyHex, serverSaltHex);
       if (authKeyHex && authKeyHex.length == 512) {
         var authKey    = bytesFromHex(authKeyHex);
         var serverSalt = bytesFromHex(serverSaltHex);
@@ -102,7 +105,7 @@ var MtpApiManager = new function () {
 
         return cache[dcID] = MtpNetworkerFactory.getNetworker(dcID, auth.authKey, auth.serverSalt, options);
       }, function (error) {
-        console.log('Get networker error', error, error.stack);
+        dump('Get networker error', error, error.stack);
         return $q.reject(error);
       });
     });
@@ -218,6 +221,7 @@ var MtpApiManager = new function () {
       mtpGetNetworker(dcID, options).then(performRequest, rejectPromise);
     } else {
       Storage.get('dc').then(function (baseDcID) {
+        dump('\nBASEDCID: '+baseDcID+'\n')
         mtpGetNetworker(dcID = baseDcID || 2, options).then(performRequest, rejectPromise);
       });
     }

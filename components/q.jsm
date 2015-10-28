@@ -1,5 +1,7 @@
 var EXPORTED_SYMBOLS = ["$q"];
 
+Components.utils.import("resource://gre/modules/Timer.jsm");
+
 var $q;
 
 (function (definition) {

@@ -1,26 +1,26 @@
 var EXPORTED_SYMBOLS = ["Storage"];
 
-var Storage = new function () {
+Components.utils.import("resource://components/q.jsm")
 
-  this.setPrefix = function (newPrefix) {
-    ConfigStorage.prefix(newPrefix);
-  };
+/*####"dc"####"dcDUMMY_auth_key"*/
+var Database = {
+  dc: 1,
+  dc1_auth_key: '',
+  dc1_server_salt: ''
+}
 
-  this.$get = ['$q', function ($q) {
-    var methods = {};
-    angular.forEach(['get', 'set', 'remove'], function (methodName) {
-      methods[methodName] = function () {
-        var deferred = $q.defer(),
-            args = Array.prototype.slice.call(arguments);
+var _get = function () {
+  var deferred = $q.defer();
 
-        args.push(function (result) {
-          deferred.resolve(result);
-        });
-        ConfigStorage[methodName].apply(ConfigStorage, args);
+  for (var i = 0; i < arguments.length; i++) {
+    var result = Database[arguments[i]];
+    dump("\nGot entry for "+arguments[i]+': '+result);
+    deferred.resolve(result);
+  }
 
-        return deferred.promise;
-      };
-    });
-    return methods;
-  }];
+  return deferred.promise;
+};
+
+var Storage = {
+  get: _get
 };
