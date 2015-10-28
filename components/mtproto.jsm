@@ -1,4 +1,561 @@
-var EXPORTED_SYMBOLS = ["MtpNetworkerFactory"];
+var EXPORTED_SYMBOLS = ["MtpAuthorizer", "MtpNetworkerFactory"];
+
+Components.utils.import("resource://components/bin_utils.jsm");
+Components.utils.import("resource://components/config.jsm");
+Components.utils.import("resource://components/q.jsm");
+Components.utils.import("resource://gre/modules/Timer.jsm");
+Components.utils.import("resource://gre/modules/Http.jsm");
+Components.utils.import("resource://components/tl_utils.jsm");
+Components.utils.import("resource://components/utils.jsm");
+
+
+var MtpRsaKeysManager = new function () {
+
+/**
+*  Server public key, obtained from here: https://core.telegram.org/api/obtaining_api_id
+*
+* -----BEGIN RSA PUBLIC KEY-----
+* MIIBCgKCAQEAwVACPi9w23mF3tBkdZz+zwrzKOaaQdr01vAbU4E1pvkfj4sqDsm6
+* lyDONS789sVoD/xCS9Y0hkkC3gtL1tSfTlgCMOOul9lcixlEKzwKENj1Yz/s7daS
+* an9tqw3bfUV/nqgbhGX81v/+7RFAEd+RwFnK7a+XYl9sluzHRyVVaTTveB2GazTw
+* Efzk2DWgkBluml8OREmvfraX3bkHZJTKX4EQSjBbbdJ2ZXIsRrYOXfaA+xayEGB+
+* 8hdlLmAjbCVfaigxX0CDqWeR1yFL9kwd9P0NsZRPsmoqVwMbMu7mStFai6aIhc3n
+* Slv8kg9qv1m6XHVQY3PnEw+QQtqSIXklHwIDAQAB
+* -----END RSA PUBLIC KEY-----
+*/
+
+  var publisKeysHex = [{
+    modulus: 'c150023e2f70db7985ded064759cfecf0af328e69a41daf4d6f01b538135a6f91f8f8b2a0ec9ba9720ce352efcf6c5680ffc424bd634864902de0b4bd6d49f4e580230e3ae97d95c8b19442b3c0a10d8f5633fecedd6926a7f6dab0ddb7d457f9ea81b8465fcd6fffeed114011df91c059caedaf97625f6c96ecc74725556934ef781d866b34f011fce4d835a090196e9a5f0e4449af7eb697ddb9076494ca5f81104a305b6dd27665722c46b60e5df680fb16b210607ef217652e60236c255f6a28315f4083a96791d7214bf64c1df4fd0db1944fb26a2a57031b32eee64ad15a8ba68885cde74a5bfc920f6abf59ba5c75506373e7130f9042da922179251f',
+    exponent: '010001'
+  }];
+
+  var publicKeysParsed = {};
+  var prepared = false;
+
+  function prepareRsaKeys () {
+    if (prepared) {
+      return;
+    }
+
+    for (var i = 0; i < publisKeysHex.length; i++) {
+      var keyParsed = publisKeysHex[i];
+
+      var RSAPublicKey = new TLSerialization();
+      RSAPublicKey.storeBytes(bytesFromHex(keyParsed.modulus), 'n');
+      RSAPublicKey.storeBytes(bytesFromHex(keyParsed.exponent), 'e');
+
+      var buffer = RSAPublicKey.getBuffer();
+
+      var fingerprintBytes = sha1BytesSync(buffer).slice(-8);
+      fingerprintBytes.reverse();
+
+      publicKeysParsed[bytesToHex(fingerprintBytes)] = {
+        modulus: keyParsed.modulus,
+        exponent: keyParsed.exponent
+      };
+    }
+
+    prepared = true;
+  };
+
+  function selectRsaKeyByFingerPrint (fingerprints) {
+    prepareRsaKeys();
+
+    var fingerprintHex, foundKey, i;
+    for (i = 0; i < fingerprints.length; i++) {
+      fingerprintHex = bigStringInt(fingerprints[i]).toString(16);
+      if (foundKey = publicKeysParsed[fingerprintHex]) {
+        return angular.extend({fingerprint: fingerprints[i]}, foundKey);
+      }
+    }
+
+    return false;
+  };
+
+  return {
+    prepare: prepareRsaKeys,
+    select: selectRsaKeyByFingerPrint
+  };
+};
+
+var MtpDcConfigurator = new function () {
+  var sslSubdomains = ['pluto', 'venus', 'aurora', 'vesta', 'flora'];
+
+  var dcOptions = Config.Modes.test
+    ? [
+      {id: 1, host: '149.154.167.40',  port: 443}
+    ]
+    : [
+      {id: 1, host: '149.154.167.50',  port: 443}
+    ];
+
+  var chosenServers = {};
+
+  function chooseServer(dcID, upload) {
+    if (chosenServers[dcID] === undefined) {
+      var chosenServer = false,
+          i, dcOption;
+
+      /*if (Config.Modes.ssl || !Config.Modes.http) {
+        var subdomain = sslSubdomains[dcID - 1] + (upload ? '-1' : '');
+        var path = Config.Modes.test ? 'apiw_test1' : 'apiw1';
+        chosenServer = 'https://' + subdomain + '.web.telegram.org/' + path;
+        return chosenServer;
+      }*/
+
+      for (i = 0; i < dcOptions.length; i++) {
+        dcOption = dcOptions[i];
+        if (dcOption.id == dcID) {
+          chosenServer = 'http://' + dcOption.host + (dcOption.port != 80 ? ':' + dcOption.port : '') + '/apiw1_test1';
+          break;
+        }
+      }
+      chosenServers[dcID] = chosenServer;
+    }
+
+    return chosenServers[dcID];
+  }
+
+  return {
+    chooseServer: chooseServer
+  };
+};
+
+var MtpTimeManager =  new function () {
+  var lastMessageID = [0, 0],
+      timeOffset = 0;
+
+    /*  Storage.get('server_time_offset').then(function (to) {
+    if (to) {
+      timeOffset = to;
+    }
+  });*/
+
+  function generateMessageID () {
+    var timeTicks = tsNow(),
+        timeSec   = Math.floor(timeTicks / 1000) + timeOffset,
+        timeMSec  = timeTicks % 1000,
+        random    = nextRandomInt(0xFFFF);
+
+    var messageID = [timeSec, (timeMSec << 21) | (random << 3) | 4];
+    if (lastMessageID[0] > messageID[0] ||
+        lastMessageID[0] == messageID[0] && lastMessageID[1] >= messageID[1]) {
+
+      messageID = [lastMessageID[0], lastMessageID[1] + 4];
+    }
+
+    lastMessageID = messageID;
+
+    // console.log('generated msg id', messageID, timeOffset);
+
+    return longFromInts(messageID[0], messageID[1]);
+  };
+
+  function applyServerTime (serverTime, localTime) {
+    var newTimeOffset = serverTime - Math.floor((localTime || tsNow()) / 1000),
+        changed = Math.abs(timeOffset - newTimeOffset) > 10;
+    Storage.set({server_time_offset: newTimeOffset});
+
+    lastMessageID = [0, 0];
+    timeOffset = newTimeOffset;
+    console.log(dT(), 'Apply server time', serverTime, localTime, newTimeOffset, changed);
+
+    return changed;
+  };
+
+  return {
+    generateID: generateMessageID,
+    applyServerTime: applyServerTime,
+  };
+};
+
+var MtpAuthorizer = new function () {
+  var chromeMatches = false,
+      chromeVersion = chromeMatches && parseFloat(chromeMatches[1]) || false,
+      xhrSendBuffer = true;
+
+
+  function mtpSendPlainRequest (dcID, requestBuffer) {
+    var requestLength = requestBuffer.byteLength,
+        requestArray  = new Int32Array(requestBuffer);
+
+    var header = new TLSerialization();
+    header.storeLongP(0, 0, 'auth_key_id'); // Auth key
+    header.storeLong(MtpTimeManager.generateID(), 'msg_id'); // Msg_id
+    header.storeInt(requestLength, 'request_length');
+
+    var headerBuffer = header.getBuffer(),
+        headerArray  = new Int32Array(headerBuffer),
+        headerLength = headerBuffer.byteLength;
+
+    var resultBuffer = new ArrayBuffer(headerLength + requestLength),
+        resultArray  = new Int32Array(resultBuffer);
+
+    resultArray.set(headerArray);
+    resultArray.set(requestArray, headerArray.length);
+
+    var requestData = xhrSendBuffer ? resultBuffer : resultArray,
+        requestPromise;
+    try {
+      dump('\nServer: '+MtpDcConfigurator.chooseServer(dcID)+'\n');
+      dump('Data: '+JSON.stringify(requestData)+'\n');
+
+      httpRequest(MtpDcConfigurator.chooseServer(dcID), requestData, function onLoad(res, xhr) {
+        dump(res);
+      }, function onError(err, res, xhr){
+        dump(err);
+        dump(res);
+        dump(xhr);
+      });
+      requestPromise =  $http.post(MtpDcConfigurator.chooseServer(dcID), requestData, {
+        responseType: 'arraybuffer',
+        transformRequest: null
+      });
+    } catch (e) {
+      requestPromise = $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE', originalError: e});
+    }
+
+    return requestPromise.then(
+      function (result) {
+        if (!result.data || !result.data.byteLength) {
+          return $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE'});
+        }
+
+        try {
+
+          var deserializer = new TLDeserialization(result.data, {mtproto: true});
+          var auth_key_id = deserializer.fetchLong('auth_key_id');
+          var msg_id      = deserializer.fetchLong('msg_id');
+          var msg_len     = deserializer.fetchInt('msg_len');
+
+        } catch (e) {
+          return $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE', originalError: e});
+        }
+
+        return deserializer;
+      },
+      function (error) {
+        if (!error.message && !error.type) {
+          error = {code: 406, type: 'NETWORK_BAD_REQUEST', originalError: error};
+        }
+        return $q.reject(error);
+      }
+    );
+  };
+
+  function mtpSendReqPQ (auth) {
+    var deferred = auth.deferred;
+
+    var request = new TLSerialization({mtproto: true});
+
+    request.storeMethod('req_pq', {nonce: auth.nonce});
+
+    dump('Send req_pq: ' + bytesToHex(auth.nonce));
+
+
+    mtpSendPlainRequest(auth.dcID, request.getBuffer()).then(function (deserializer) {
+      dump("\nInside mtpSendPlainRequest\n")
+
+      var response = deserializer.fetchObject('ResPQ');
+
+      if (response._ != 'resPQ') {
+        throw new Error('resPQ response invalid: ' + response._);
+      }
+
+      if (!bytesCmp (auth.nonce, response.nonce)) {
+        throw new Error('resPQ nonce mismatch');
+      }
+
+      auth.serverNonce = response.server_nonce;
+      auth.pq = response.pq;
+      auth.fingerprints = response.server_public_key_fingerprints;
+
+      console.log(dT(), 'Got ResPQ', bytesToHex(auth.serverNonce), bytesToHex(auth.pq), auth.fingerprints);
+
+      auth.publicKey = MtpRsaKeysManager.select(auth.fingerprints);
+
+      if (!auth.publicKey) {
+        throw new Error('No public key found');
+      }
+
+      console.log(dT(), 'PQ factorization start', auth.pq);
+      CryptoWorker.factorize(auth.pq).then(function (pAndQ) {
+        auth.p = pAndQ[0];
+        auth.q = pAndQ[1];
+        console.log(dT(), 'PQ factorization done', pAndQ[2]);
+        mtpSendReqDhParams(auth);
+      }, function (error) {
+        console.log('Worker error', error, error.stack);
+        deferred.reject(error);
+      });
+    }, function (error) {
+      console.log(dT(), 'req_pq error', error.message);
+      deferred.reject(error);
+    });
+
+    setTimeout(function () {
+      MtpRsaKeysManager.prepare();
+    }, 0);
+  };
+
+  function mtpSendReqDhParams (auth) {
+
+    var deferred = auth.deferred;
+
+    auth.newNonce = new Array(32);
+    MtpSecureRandom.nextBytes(auth.newNonce);
+
+    var data = new TLSerialization({mtproto: true});
+    data.storeObject({
+      _: 'p_q_inner_data',
+      pq: auth.pq,
+      p: auth.p,
+      q: auth.q,
+      nonce: auth.nonce,
+      server_nonce: auth.serverNonce,
+      new_nonce: auth.newNonce
+    }, 'P_Q_inner_data', 'DECRYPTED_DATA');
+
+    var dataWithHash = sha1BytesSync(data.getBuffer()).concat(data.getBytes());
+
+    var request = new TLSerialization({mtproto: true});
+    request.storeMethod('req_DH_params', {
+      nonce: auth.nonce,
+      server_nonce: auth.serverNonce,
+      p: auth.p,
+      q: auth.q,
+      public_key_fingerprint: auth.publicKey.fingerprint,
+      encrypted_data: rsaEncrypt(auth.publicKey, dataWithHash)
+    });
+
+    console.log(dT(), 'Send req_DH_params');
+    mtpSendPlainRequest(auth.dcID, request.getBuffer()).then(function (deserializer) {
+      var response = deserializer.fetchObject('Server_DH_Params', 'RESPONSE');
+
+      if (response._ != 'server_DH_params_fail' && response._ != 'server_DH_params_ok') {
+        deferred.reject(new Error('Server_DH_Params response invalid: ' + response._));
+        return false;
+      }
+
+      if (!bytesCmp (auth.nonce, response.nonce)) {
+        deferred.reject(new Error('Server_DH_Params nonce mismatch'));
+        return false;
+      }
+
+      if (!bytesCmp (auth.serverNonce, response.server_nonce)) {
+        deferred.reject(new Error('Server_DH_Params server_nonce mismatch'));
+        return false;
+      }
+
+      if (response._ == 'server_DH_params_fail') {
+        var newNonceHash = sha1BytesSync(auth.newNonce).slice(-16);
+        if (!bytesCmp (newNonceHash, response.new_nonce_hash)) {
+          deferred.reject(new Error('server_DH_params_fail new_nonce_hash mismatch'));
+          return false;
+        }
+        deferred.reject(new Error('server_DH_params_fail'));
+        return false;
+      }
+
+      try {
+        mtpDecryptServerDhDataAnswer(auth, response.encrypted_answer);
+      } catch (e) {
+        deferred.reject(e);
+        return false;
+      }
+
+      mtpSendSetClientDhParams(auth);
+    }, function (error) {
+      deferred.reject(error);
+    });
+  };
+
+  function mtpDecryptServerDhDataAnswer (auth, encryptedAnswer) {
+    auth.localTime = tsNow();
+
+    auth.tmpAesKey = sha1BytesSync(auth.newNonce.concat(auth.serverNonce)).concat(sha1BytesSync(auth.serverNonce.concat(auth.newNonce)).slice(0, 12));
+    auth.tmpAesIv = sha1BytesSync(auth.serverNonce.concat(auth.newNonce)).slice(12).concat(sha1BytesSync([].concat(auth.newNonce, auth.newNonce)), auth.newNonce.slice(0, 4));
+
+    var answerWithHash = aesDecryptSync(encryptedAnswer, auth.tmpAesKey, auth.tmpAesIv);
+
+    var hash = answerWithHash.slice(0, 20);
+    var answerWithPadding = answerWithHash.slice(20);
+    var buffer = bytesToArrayBuffer(answerWithPadding);
+
+    var deserializer = new TLDeserialization(buffer, {mtproto: true});
+    var response = deserializer.fetchObject('Server_DH_inner_data');
+
+    if (response._ != 'server_DH_inner_data') {
+      throw new Error('server_DH_inner_data response invalid: ' + constructor);
+    }
+
+    if (!bytesCmp (auth.nonce, response.nonce)) {
+      throw new Error('server_DH_inner_data nonce mismatch');
+    }
+
+    if (!bytesCmp (auth.serverNonce, response.server_nonce)) {
+      throw new Error('server_DH_inner_data serverNonce mismatch');
+    }
+
+    console.log(dT(), 'Done decrypting answer');
+    auth.g          = response.g;
+    auth.dhPrime    = response.dh_prime;
+    auth.gA         = response.g_a;
+    auth.serverTime = response.server_time;
+    auth.retry      = 0;
+
+    var offset = deserializer.getOffset();
+
+    if (!bytesCmp(hash, sha1BytesSync(answerWithPadding.slice(0, offset)))) {
+      throw new Error('server_DH_inner_data SHA1-hash mismatch');
+    }
+
+    MtpTimeManager.applyServerTime(auth.serverTime, auth.localTime);
+  };
+
+  function mtpSendSetClientDhParams(auth) {
+    var deferred = auth.deferred,
+        gBytes = bytesFromHex(auth.g.toString(16));
+
+    auth.b = new Array(256);
+    MtpSecureRandom.nextBytes(auth.b);
+
+    CryptoWorker.modPow(gBytes, auth.b, auth.dhPrime).then(function (gB) {
+
+      var data = new TLSerialization({mtproto: true});
+      data.storeObject({
+        _: 'client_DH_inner_data',
+        nonce: auth.nonce,
+        server_nonce: auth.serverNonce,
+        retry_id: [0, auth.retry++],
+        g_b: gB,
+      }, 'Client_DH_Inner_Data');
+
+      var dataWithHash = sha1BytesSync(data.getBuffer()).concat(data.getBytes());
+
+      var encryptedData = aesEncryptSync(dataWithHash, auth.tmpAesKey, auth.tmpAesIv);
+
+      var request = new TLSerialization({mtproto: true});
+      request.storeMethod('set_client_DH_params', {
+        nonce: auth.nonce,
+        server_nonce: auth.serverNonce,
+        encrypted_data: encryptedData
+      });
+
+      console.log(dT(), 'Send set_client_DH_params');
+      mtpSendPlainRequest(auth.dcID, request.getBuffer()).then(function (deserializer) {
+        var response = deserializer.fetchObject('Set_client_DH_params_answer');
+
+        if (response._ != 'dh_gen_ok' && response._ != 'dh_gen_retry' && response._ != 'dh_gen_fail') {
+          deferred.reject(new Error('Set_client_DH_params_answer response invalid: ' + response._));
+          return false;
+        }
+
+        if (!bytesCmp (auth.nonce, response.nonce)) {
+          deferred.reject(new Error('Set_client_DH_params_answer nonce mismatch'));
+          return false
+        }
+
+        if (!bytesCmp (auth.serverNonce, response.server_nonce)) {
+          deferred.reject(new Error('Set_client_DH_params_answer server_nonce mismatch'));
+          return false;
+        }
+
+        CryptoWorker.modPow(auth.gA, auth.b, auth.dhPrime).then(function (authKey) {
+          var authKeyHash = sha1BytesSync(authKey),
+              authKeyAux  = authKeyHash.slice(0, 8),
+              authKeyID   = authKeyHash.slice(-8);
+
+          console.log(dT(), 'Got Set_client_DH_params_answer', response._);
+          switch (response._) {
+            case 'dh_gen_ok':
+              var newNonceHash1 = sha1BytesSync(auth.newNonce.concat([1], authKeyAux)).slice(-16);
+
+              if (!bytesCmp(newNonceHash1, response.new_nonce_hash1)) {
+                deferred.reject(new Error('Set_client_DH_params_answer new_nonce_hash1 mismatch'));
+                return false;
+              }
+
+              var serverSalt = bytesXor(auth.newNonce.slice(0, 8), auth.serverNonce.slice(0, 8));
+              // console.log('Auth successfull!', authKeyID, authKey, serverSalt);
+
+              auth.authKeyID = authKeyID;
+              auth.authKey = authKey;
+              auth.serverSalt = serverSalt;
+
+              deferred.resolve(auth);
+              break;
+
+            case 'dh_gen_retry':
+              var newNonceHash2 = sha1BytesSync(auth.newNonce.concat([2], authKeyAux)).slice(-16);
+              if (!bytesCmp(newNonceHash2, response.new_nonce_hash2)) {
+                deferred.reject(new Error('Set_client_DH_params_answer new_nonce_hash2 mismatch'));
+                return false;
+              }
+
+              return mtpSendSetClientDhParams(auth);
+
+            case 'dh_gen_fail':
+              var newNonceHash3 = sha1BytesSync(auth.newNonce.concat([3], authKeyAux)).slice(-16);
+              if (!bytesCmp(newNonceHash3, response.new_nonce_hash3)) {
+                deferred.reject(new Error('Set_client_DH_params_answer new_nonce_hash3 mismatch'));
+                return false;
+              }
+
+              deferred.reject(new Error('Set_client_DH_params_answer fail'));
+              return false;
+          }
+        }, function (error) {
+          deferred.reject(error);
+        })
+      }, function (error) {
+        deferred.reject(error);
+      });
+    }, function (error) {
+      deferred.reject(error);
+    })
+  };
+
+  var cached = {};
+
+  function mtpAuth (dcID) {
+    if (cached[dcID] !== undefined) {
+      return cached[dcID];
+    }
+
+    var nonce = [];
+    for (var i = 0; i < 16; i++) {
+      nonce.push(nextRandomInt(0xFF));
+    }
+
+    if (!MtpDcConfigurator.chooseServer(dcID)) {
+      return $q.reject(new Error('No server found for dc ' + dcID));
+    }
+
+    var auth = {
+      dcID: dcID,
+      nonce: nonce,
+      deferred: $q.defer()
+    };
+
+    setTimeout(function () {
+      mtpSendReqPQ(auth);
+    }, 0);
+
+    cached[dcID] = auth.deferred.promise;
+
+    cached[dcID]['catch'](function () {
+      delete cached[dcID];
+    })
+
+    return cached[dcID];
+  };
+
+  return {
+    auth: mtpAuth
+  };
+
+};
 
 var MtpNetworkerFactory = new function () {
 
@@ -9,7 +566,7 @@ var MtpNetworkerFactory = new function () {
       akStopped = false,
       chromeMatches = false,
       chromeVersion = chromeMatches && parseFloat(chromeMatches[1]) || false,
-      xhrSendBuffer = true;//!('ArrayBufferView' in window) && (!chromeVersion || chromeVersion < 30);
+      xhrSendBuffer = false;//!('ArrayBufferView' in window) && (!chromeVersion || chromeVersion < 30);
 
   //delete $http.defaults.headers.post['Content-Type'];
   //delete $http.defaults.headers.common['Accept'];
@@ -182,10 +739,10 @@ var MtpNetworkerFactory = new function () {
       serializer.storeInt(Config.Schema.API.layer, 'layer');
       serializer.storeInt(0x69796de9, 'initConnection');
       serializer.storeInt(Config.App.id, 'api_id');
-      serializer.storeString(navigator.userAgent || 'Unknown UserAgent', 'device_model');
-      serializer.storeString(navigator.platform  || 'Unknown Platform', 'system_version');
+      serializer.storeString('Unknown UserAgent', 'device_model');
+      serializer.storeString('Unknown Platform', 'system_version');
       serializer.storeString(Config.App.version, 'app_version');
-      serializer.storeString(navigator.language || 'en', 'lang_code');
+      serializer.storeString('en', 'lang_code');
     }
 
     if (options.afterMessageID) {

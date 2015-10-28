@@ -25,10 +25,9 @@ Started with the function "sendCode"
 Now on MtpApiManager
 
 Current file:
-mtproto_wrapper.jsm
--ng_utils.jsm
+mtproto.jsm
 Current error:
-Storage.get is not a function.
+Looking for an $http alternative
 
 ### Usefull links:
 http://telegram.org/api

@@ -7,6 +7,9 @@ Components.utils.import("resource://components/ng_utils.jsm");
 Components.utils.import("resource://components/config.jsm");
 Components.utils.import("resource://components/q.jsm")
 
+Components.utils.import("resource://components/mtproto.jsm");
+
+
 
 var MtpApiManager = new function () {
   var cachedNetworkers = {},
@@ -85,7 +88,7 @@ var MtpApiManager = new function () {
 
       var authKeyHex = result[0],
           serverSaltHex = result[1];
-      dump('ass', dcID, authKeyHex, serverSaltHex);
+      //dump('ass', dcID, authKeyHex, serverSaltHex, '\n');
       if (authKeyHex && authKeyHex.length == 512) {
         var authKey    = bytesFromHex(authKeyHex);
         var serverSalt = bytesFromHex(serverSaltHex);
@@ -98,6 +101,8 @@ var MtpApiManager = new function () {
       }
 
       return MtpAuthorizer.auth(dcID).then(function (auth) {
+        dump('\nHERE: '+auth+'\n')
+
         var storeObj = {};
         storeObj[akk] = bytesToHex(auth.authKey);
         storeObj[ssk] = bytesToHex(auth.serverSalt);
@@ -163,7 +168,7 @@ var MtpApiManager = new function () {
           deferred.resolve(result);
         },
         function (error) {
-          console.error(dT(), 'Error', error.code, error.type, baseDcID, dcID);
+          dump(dT(), 'Error', error.code, error.type, baseDcID, dcID);
           if (error.code == 401 && baseDcID == dcID) {
             Storage.remove('dc', 'user_auth');
             telegramMeNotify(false);
@@ -231,7 +236,8 @@ var MtpApiManager = new function () {
 
   function mtpGetUserID () {
     return Storage.get('user_auth').then(function (auth) {
-      telegramMeNotify(auth && auth.id > 0 || false);
+      //telegramMeNotify(auth && auth.id > 0 || false);
+      dump("user_auth: "+auth.id);
       return auth.id || 0;
     });
   }

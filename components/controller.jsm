@@ -1,10 +1,30 @@
-var EXPORTED_SYMBOLS = ["sendCode"];
+var EXPORTED_SYMBOLS = ["sendCode", "init", "login"];
 
 Components.utils.import("resource://components/config.jsm");
 Components.utils.import("resource://components/utils.jsm");
 
 Components.utils.import("resource://components/mtproto_wrapper.jsm");
 
+var init = function () {
+  MtpApiManager.getUserID().then(function (id) {
+    if (id) {
+      dump("Have ID!");
+      return;
+    }
+  });
+}
+
+var login = function () {
+  var options = {dcID: 2, createNetworker: true},
+    countryChanged = false,
+    selectedCountry = false;
+
+  MtpApiManager.invokeApi('help.getNearestDc', {}, {dcID: 1, createNetworker: true}).then(function (nearestDcResult) {
+    if (nearestDcResult.nearest_dc != nearestDcResult.this_dc) {
+      MtpApiManager.getNetworker(nearestDcResult.nearest_dc, {createNetworker: true});
+    }
+  });
+}
 
 var sendCode = function () {
   var authKeyStarted = tsNow();

@@ -5,11 +5,12 @@
 Components.utils.import("resource:///modules/imXPCOMUtils.jsm");
 Components.utils.import("resource:///modules/jsProtoHelper.jsm");
 
-Components.utils.import("resource://components/mtproto.jsm");
+//Components.utils.import("resource://components/mtproto.jsm");
 Components.utils.import("resource://components/controller.jsm");
 
-//MtpNetworkerFactory.startAll();
-//sendCode();
+//init();
+login();
+
 
 function Conversation(aAccount)
 {
