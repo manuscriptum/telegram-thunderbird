@@ -26,8 +26,9 @@ Now on MtpApiManager
 
 Current file:
 mtproto_wrapper.jsm
+-ng_utils.jsm
 Current error:
-$q is undefined.
+Storage.get is not a function.
 
 ### Usefull links:
 http://telegram.org/api

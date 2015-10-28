@@ -5,7 +5,7 @@
 Components.utils.import("resource:///modules/imXPCOMUtils.jsm");
 Components.utils.import("resource:///modules/jsProtoHelper.jsm");
 
-Components.utils.import("chrome://telegram/content/components/controller.jsm");
+Components.utils.import("resource://components/controller.jsm");
 
 sendCode();
 

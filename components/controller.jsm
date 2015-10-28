@@ -1,13 +1,13 @@
 var EXPORTED_SYMBOLS = ["sendCode"];
 
-Components.utils.import("chrome://telegram/content/config.jsm");
-Components.utils.import("chrome://telegram/content/components/utils.jsm");
+Components.utils.import("resource://components/config.jsm");
+Components.utils.import("resource://components/utils.jsm");
 
-Components.utils.import("chrome://telegram/content/components/mtproto_wrapper.jsm");
+Components.utils.import("resource://components/mtproto_wrapper.jsm");
 
 
 var sendCode = function () {
-  var authKeyStarted = Utils.tsNow();
+  var authKeyStarted = tsNow();
   MtpApiManager.invokeApi('auth.sendCode', {
     phone_number: '+4915773199745',
     // sms_type: 5,

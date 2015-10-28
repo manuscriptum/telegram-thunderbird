@@ -1,7 +1,9 @@
 var EXPORTED_SYMBOLS = ["MtpApiManager"];
 
-Components.utils.import("chrome://telegram/content/components/bin_utils.jsm");
-Components.utils.import("chrome://telegram/content/config.jsm");
+Components.utils.import("resource://components/bin_utils.jsm");
+Components.utils.import("resource://components/ng_utils.jsm");
+Components.utils.import("resource://components/config.jsm");
+Components.utils.import("resource://components/q.jsm")
 
 
 var MtpApiManager = new function () {
