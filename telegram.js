@@ -8,6 +8,18 @@ Components.utils.import("resource:///modules/jsProtoHelper.jsm");
 //Components.utils.import("resource://components/mtproto.jsm");
 Components.utils.import("resource://components/controller.jsm");
 
+/*Components.utils.import("resource://gre/modules/Http.jsm");
+httpRequest('http://google.com', {
+  onLoad: function (res, xhr) {
+    dump(res);
+  },
+  onError: function (err, res, xhr){
+    dump(err);
+    dump(res);
+    dump(xhr);
+  }
+});*/
+
 //init();
 login();
 

@@ -4,7 +4,7 @@ Components.utils.import("resource://components/bin_utils.jsm");
 Components.utils.import("resource://components/config.jsm");
 Components.utils.import("resource://components/q.jsm");
 Components.utils.import("resource://gre/modules/Timer.jsm");
-Components.utils.import("resource://gre/modules/Http.jsm");
+//Components.utils.import("resource://gre/modules/Http.jsm");
 Components.utils.import("resource://components/tl_utils.jsm");
 Components.utils.import("resource://components/utils.jsm");
 
@@ -106,7 +106,8 @@ var MtpDcConfigurator = new function () {
       for (i = 0; i < dcOptions.length; i++) {
         dcOption = dcOptions[i];
         if (dcOption.id == dcID) {
-          chosenServer = 'http://' + dcOption.host + (dcOption.port != 80 ? ':' + dcOption.port : '') + '/apiw1_test1';
+          //chosenServer = 'https://' + dcOption.host + (dcOption.port != 80 ? ':' + dcOption.port : '') + '/apiw1_test1';
+          chosenServer = 'https://'+ dcOption.host+'/api';
           break;
         }
       }
@@ -196,18 +197,46 @@ var MtpAuthorizer = new function () {
 
     var requestData = xhrSendBuffer ? resultBuffer : resultArray,
         requestPromise;
-    try {
-      dump('\nServer: '+MtpDcConfigurator.chooseServer(dcID)+'\n');
-      dump('Data: '+JSON.stringify(requestData)+'\n');
 
-      httpRequest(MtpDcConfigurator.chooseServer(dcID), requestData, function onLoad(res, xhr) {
-        dump(res);
-      }, function onError(err, res, xhr){
-        dump(err);
-        dump(res);
-        dump(xhr);
-      });
-      requestPromise =  $http.post(MtpDcConfigurator.chooseServer(dcID), requestData, {
+    var deferred = $q.defer();
+
+    dump('\nServer: '+MtpDcConfigurator.chooseServer(dcID)+'\n');
+    dump('\nData: '+JSON.stringify(resultArray)+'\n');
+
+    let xhr = Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Components.interfaces.nsIXMLHttpRequest);;
+    xhr.open("POST", 'http://149.154.167.40:443/api', true);
+    xhr.setRequestHeader("Content-type", null);
+    xhr.setRequestHeader("Accept", null);
+    xhr.responseType = 'arraybuffer';
+    xhr.onreadystatechange = function () {
+      //dump('\n\nError:!! '+this.status);
+      if (xhr.readyState === 4) {
+        //dump('\n\nSuccess:!! '+(typeof this.response));
+        dump('\nResponse: '+JSON.stringify(this.response))
+
+        //dump(JSON.stringify(deserializer));
+        deferred.resolve(this.response);
+      }
+    }
+    xhr.send(resultBuffer);
+
+    return deferred.promise.then(function (result) {
+      var deserializer = new TLDeserialization(result, {mtproto: true});
+      var auth_key_id = deserializer.fetchLong('auth_key_id');
+      var msg_id      = deserializer.fetchLong('msg_id');
+      var msg_len     = deserializer.fetchInt('msg_len');
+
+      dump(deserializer.fetchObject('ResPQ'));
+
+      dump(msg_id+':' +msg_len);
+
+      return deserializer;
+    });
+
+    /*requestPromise = $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE', originalError: 'asdf'});
+
+    try {
+      /*requestPromise =  $http.post(MtpDcConfigurator.chooseServer(dcID), requestData, {
         responseType: 'arraybuffer',
         transformRequest: null
       });
@@ -215,7 +244,7 @@ var MtpAuthorizer = new function () {
       requestPromise = $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE', originalError: e});
     }
 
-    return requestPromise.then(
+    /*return requestPromise.then(
       function (result) {
         if (!result.data || !result.data.byteLength) {
           return $q.reject({code: 406, type: 'NETWORK_BAD_RESPONSE'});
@@ -240,7 +269,7 @@ var MtpAuthorizer = new function () {
         }
         return $q.reject(error);
       }
-    );
+    );*/
   };
 
   function mtpSendReqPQ (auth) {
@@ -256,6 +285,8 @@ var MtpAuthorizer = new function () {
     mtpSendPlainRequest(auth.dcID, request.getBuffer()).then(function (deserializer) {
       dump("\nInside mtpSendPlainRequest\n")
 
+      dump(deserializer.fetchObject('ResPQ'));
+
       var response = deserializer.fetchObject('ResPQ');
 
       if (response._ != 'resPQ') {
@@ -270,7 +301,7 @@ var MtpAuthorizer = new function () {
       auth.pq = response.pq;
       auth.fingerprints = response.server_public_key_fingerprints;
 
-      console.log(dT(), 'Got ResPQ', bytesToHex(auth.serverNonce), bytesToHex(auth.pq), auth.fingerprints);
+      dump('Got ResPQ', bytesToHex(auth.serverNonce), bytesToHex(auth.pq), auth.fingerprints);
 
       auth.publicKey = MtpRsaKeysManager.select(auth.fingerprints);
 
@@ -278,7 +309,7 @@ var MtpAuthorizer = new function () {
         throw new Error('No public key found');
       }
 
-      console.log(dT(), 'PQ factorization start', auth.pq);
+      dump('PQ factorization start', auth.pq);
       CryptoWorker.factorize(auth.pq).then(function (pAndQ) {
         auth.p = pAndQ[0];
         auth.q = pAndQ[1];
